@@ -45,18 +45,21 @@ function PLUGIN:CreateClientDropEffect(position, itemID)
     self:CreateDropInfoDisplay(position, itemID)
 end
 
+-- Уникальный счётчик для имён хуков (избегаем коллизии при position:Length() у разных точек)
+local dropInfoHookCounter = 0
 function PLUGIN:CreateDropInfoDisplay(position, itemID)
+    dropInfoHookCounter = dropInfoHookCounter + 1
+    local hookName = "DropItemInfo" .. tostring(dropInfoHookCounter)
     local endTime = CurTime() + 3
     
-    hook.Add("PostDrawTranslucentRenderables", "DropItemInfo" .. util.CRC(position:Length()), function()
+    hook.Add("PostDrawTranslucentRenderables", hookName, function()
         if (CurTime() > endTime) then
-            hook.Remove("PostDrawTranslucentRenderables", "DropItemInfo" .. util.CRC(position:Length()))
+            hook.Remove("PostDrawTranslucentRenderables", hookName)
             return
         end
         
         local alpha = math.max(0, (endTime - CurTime()) / 3) * 255
         local distance = LocalPlayer():GetPos():Distance(position)
-        
         if (distance > 500) then return end
         
         local ang = (LocalPlayer():GetPos() - position):Angle()
@@ -66,13 +69,9 @@ function PLUGIN:CreateDropInfoDisplay(position, itemID)
         cam.Start3D2D(position + Vector(0, 0, 20 + math.sin(CurTime() * 3) * 5), ang, 0.1)
             surface.SetFont("ixMediumFont")
             surface.SetTextColor(255, 255, 255, alpha)
-            
             local text = "Dropped Item"
             local item = ix.item.list[itemID]
-            if (item and item.name) then
-                text = item.name
-            end
-            
+            if (item and item.name) then text = item.name end
             local w, h = surface.GetTextSize(text)
             surface.SetTextPos(-w/2, -h/2)
             surface.DrawText(text)

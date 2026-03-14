@@ -5,66 +5,54 @@
 
 local PLUGIN = PLUGIN
 
+-- Включить отладочный вывод (поставить true только для диагностики)
+local DROP_DEBUG = false
+local function dropLog(...) if (DROP_DEBUG) then print("[DropItems]", ...) end end
+
 -- ============================================================================
 -- ОСНОВНАЯ ЛОГИКА ВЫБРАСЫВАНИЯ
 -- ============================================================================
 
-function PLUGIN:DropPlayerItems(client, attacker, inflictor)
-    print("[DropItems] Starting drop for player: " .. client:GetName())
+function PLUGIN:DropPlayerItems(client, attacker, inflictor, characterOverride)
+    dropLog("Starting drop for player:", IsValid(client) and client:GetName() or "?")
     
+    if (!IsValid(client)) then return false end
     if (!self:CanPlayerDrop(client)) then
-        print("[DropItems] Cannot drop - CanPlayerDrop returned false")
+        dropLog("Cannot drop - CanPlayerDrop returned false")
         return false
     end
     
-    local character = client:GetCharacter()
+    -- Используем переданный персонаж (при смерти) или текущий — чтобы не выбросить вещи нового персонажа после респавна
+    local character = characterOverride or client:GetCharacter()
     if (!character) then
-        print("[DropItems] Cannot drop - no character")
+        dropLog("Cannot drop - no character")
         return false
     end
     
     local inventory = character:GetInventory()
     if (!inventory) then
-        print("[DropItems] Cannot drop - no inventory")
+        dropLog("Cannot drop - no inventory")
         return false
     end
     
-    -- Проверяем есть ли предметы разными способами
-    local items = inventory.items or inventory:GetItems() or {}
-    if (table.Count(items) == 0 and inventory.slots) then
-        for slotID, item in pairs(inventory.slots) do
-            if (item and IsValid(item)) then
-                items[item:GetID()] = item
-            end
-        end
-    end
-    
+    local items = self:GetInventoryItemsTable(inventory)
     if (table.Count(items) == 0) then
-        print("[DropItems] Cannot drop - no items found in inventory")
+        dropLog("Cannot drop - no items found in inventory")
         return false
     end
     
-    print("[DropItems] Found " .. table.Count(items) .. " items in inventory")
-    
-    -- Проверяем условия выброса
     if (!self:ShouldDropOnDeath(client, attacker, inflictor)) then
-        print("[DropItems] Cannot drop - ShouldDropOnDeath returned false")
+        dropLog("Cannot drop - ShouldDropOnDeath returned false")
         return false
     end
     
-    -- Получаем предметы для выброса
     local itemsToDrop = self:GetItemsToDrop(inventory)
-    print("[DropItems] Items to drop: " .. #itemsToDrop)
-    
     if (#itemsToDrop == 0) then
-        print("[DropItems] No items to drop")
+        dropLog("No items to drop")
         return false
     end
     
-    -- Выбрасываем предметы
     local droppedCount = self:ExecuteItemDrop(client, itemsToDrop)
-    print("[DropItems] Dropped count: " .. droppedCount)
-    
     if (droppedCount > 0) then
         -- Устанавливаем кулдаун
         self:SetPlayerDropCooldown(client)
@@ -85,149 +73,76 @@ function PLUGIN:DropPlayerItems(client, attacker, inflictor)
 end
 
 function PLUGIN:ShouldDropOnDeath(client, attacker, inflictor)
-    print("[DropItems] ShouldDropOnDeath check:")
-    print("[DropItems] - Client: " .. (IsValid(client) and client:GetName() or "Invalid"))
-    print("[DropItems] - Attacker: " .. (IsValid(attacker) and attacker:GetName() or "Invalid/World"))
-    print("[DropItems] - Same player: " .. tostring(attacker == client))
-    
-    -- Проверяем тип смерти
     if (attacker == client) then
-        -- Самоубийство
-        local suicideEnabled = ix.config.Get("dropItemsSuicideEnabled", true)
-        print("[DropItems] - Suicide kill, enabled: " .. tostring(suicideEnabled))
-        if (!suicideEnabled) then
-            print("[DropItems] - Blocking suicide drop")
+        if (!ix.config.Get("dropItemsSuicideEnabled", true)) then
+            dropLog("Blocking suicide drop")
             return false
         end
     elseif (IsValid(attacker) and attacker:IsPlayer()) then
-        -- Убийство игроком - ВСЕГДА разрешаем выброс
-        print("[DropItems] - Player vs player kill - ALWAYS allow")
         return true
     elseif (IsValid(attacker) and attacker:IsNPC()) then
-        -- Убийство NPC
-        local npcEnabled = ix.config.Get("dropItemsNPCKillEnabled", true)
-        print("[DropItems] - NPC kill, enabled: " .. tostring(npcEnabled))
-        if (!npcEnabled) then
-            print("[DropItems] - Blocking NPC drop")
+        if (!ix.config.Get("dropItemsNPCKillEnabled", true)) then
+            dropLog("Blocking NPC drop")
             return false
         end
     elseif (IsValid(attacker) and !attacker:IsPlayer()) then
-        -- Убийство пропом/миром
-        local propEnabled = ix.config.Get("dropItemsPropKillEnabled", false)
-        print("[DropItems] - Prop/world kill, enabled: " .. tostring(propEnabled))
-        if (!propEnabled) then
-            print("[DropItems] - Blocking prop/world drop")
+        if (!ix.config.Get("dropItemsPropKillEnabled", false)) then
+            dropLog("Blocking prop/world drop")
             return false
         end
-    else
-        print("[DropItems] - Unknown attacker type")
     end
     
-    -- Проверяем общий шанс
     local chance = ix.config.Get("dropItemsChance", 100)
-    local roll = math.random(1, 100)
-    print("[DropItems] - Chance roll: " .. roll .. "/" .. chance)
-    if (roll > chance) then
-        print("[DropItems] - Blocking due to chance")
+    if (math.random(1, 100) > chance) then
+        dropLog("Blocking due to chance")
         return false
     end
-    
-    print("[DropItems] - Should drop: YES")
     return true
 end
 
-function PLUGIN:GetItemsToDrop(inventory)
-    local itemsToDrop = {}
-    local maxItems = ix.config.Get("dropItemsMaxCount", 10)
-    print("[DropItems] GetItemsToDrop - MaxItems: " .. maxItems)
-    
-    -- Собираем все доступные предметы
-    local availableItems = {}
-    local totalItems = 0
-    local canDropItems = 0
-    
-    -- Пробуем несколько способов получить предметы из инвентаря
+-- Единая функция получения таблицы предметов инвентаря (убирает дублирование)
+function PLUGIN:GetInventoryItemsTable(inventory)
     local items = inventory.items or inventory:GetItems() or {}
-    
-    -- Если items всё ещё пустой, попробуем другой подход
     if (table.Count(items) == 0 and inventory.slots) then
-        print("[DropItems] Trying to get items from slots")
         for slotID, item in pairs(inventory.slots) do
             if (item and IsValid(item)) then
                 items[item:GetID()] = item
             end
         end
     end
+    return items
+end
+
+function PLUGIN:GetItemsToDrop(inventory)
+    local itemsToDrop = {}
+    local maxItems = ix.config.Get("dropItemsMaxCount", 10)
+    local items = self:GetInventoryItemsTable(inventory)
     
-    print("[DropItems] Found items table with " .. table.Count(items) .. " items")
-    
+    local availableItems = {}
     for itemID, item in pairs(items) do
-        totalItems = totalItems + 1
-        print("[DropItems] Checking item: " .. (item.uniqueID or "unknown") .. " (name: " .. (item.name or "unnamed") .. ")")
-        
         if (self:CanItemDrop(item)) then
-            canDropItems = canDropItems + 1
             local dropChance = self:GetItemDropChance(item.uniqueID)
-            local roll = math.random(1, 100)
-            
-            print("[DropItems] - Can drop, chance: " .. dropChance .. "%, roll: " .. roll)
-            
-            if (roll <= dropChance) then
+            if (math.random(1, 100) <= dropChance) then
                 table.insert(availableItems, {
                     item = item,
                     priority = self:GetItemDropPriority(item)
                 })
-                print("[DropItems] - Added to drop list")
-            else
-                print("[DropItems] - Failed chance roll")
             end
-        else
-            print("[DropItems] - Cannot drop (blacklisted/special)")
         end
     end
     
-    print("[DropItems] Total items in inventory: " .. totalItems)
-    print("[DropItems] Items that can drop: " .. canDropItems)
-    print("[DropItems] Items passed chance roll: " .. #availableItems)
-    
-    -- Сортируем по приоритету (больший приоритет = больше шанс выпасть)
-    table.sort(availableItems, function(a, b)
-        return a.priority > b.priority
-    end)
-    
-    -- Выбираем предметы для выброса
+    table.sort(availableItems, function(a, b) return a.priority > b.priority end)
     for i = 1, math.min(#availableItems, maxItems) do
         table.insert(itemsToDrop, availableItems[i].item)
     end
-    
-    print("[DropItems] Final items to drop: " .. #itemsToDrop)
     return itemsToDrop
 end
 
 function PLUGIN:CanItemDrop(item)
-    if (!item) then 
-        print("[DropItems] CanItemDrop: item is nil")
-        return false 
-    end
-    
-    -- Проверяем черный список
-    if (self:IsItemBlacklisted(item)) then
-        print("[DropItems] CanItemDrop: item blacklisted - " .. (item.uniqueID or "unknown"))
-        return false
-    end
-    
-    -- Проверяем специальные флаги
-    if (item.noDrop or item.permanent or item.important) then
-        print("[DropItems] CanItemDrop: item has special flags - " .. (item.uniqueID or "unknown"))
-        return false
-    end
-    
-    -- Проверяем экипированные предметы
-    if (item:GetData("equip")) then
-        print("[DropItems] CanItemDrop: item is equipped - " .. (item.uniqueID or "unknown"))
-        return false
-    end
-    
+    if (!item) then return false end
+    if (self:IsItemBlacklisted(item)) then return false end
+    if (item.noDrop or item.permanent or item.important) then return false end
+    if (item:GetData("equip")) then return false end
     return true
 end
 
@@ -380,25 +295,35 @@ end
 -- ХУКИ И СОБЫТИЯ
 -- ============================================================================
 
+-- Сохраняем персонажа на момент смерти, чтобы не выбросить вещи нового персонажа после быстрого респавна
 function PLUGIN:PlayerDeath(client, inflictor, attacker)
+    local character = IsValid(client) and client:GetCharacter()
+    if (!character) then return end
     timer.Simple(0.1, function()
         if (IsValid(client)) then
-            self:DropPlayerItems(client, attacker, inflictor)
+            self:DropPlayerItems(client, attacker, inflictor, character)
         end
     end)
 end
 
 function PLUGIN:PlayerDisconnected(client)
-    -- Очищаем данные игрока
-    if (self.playerDropCooldowns) then
+    if (self.playerDropCooldowns and IsValid(client)) then
         self.playerDropCooldowns[client:SteamID64()] = nil
     end
 end
 
-function PLUGIN:ShutDown()
-    -- Сохраняем данные при выключении сервера
-    self:SaveData()
+-- Периодическая очистка истёкших кулдаунов (раз в 60 сек), без вызова каждый кадр
+local COOLDOWN_CLEANUP_TIMER = "ix_dropitems_cooldown_cleanup"
+function PLUGIN:CleanupExpiredCooldowns()
+    local now = CurTime()
+    local cooldowns = self.playerDropCooldowns
+    if (cooldowns) then
+        for steamID, untilTime in pairs(cooldowns) do
+            if (untilTime <= now) then cooldowns[steamID] = nil end
+        end
+    end
 end
+
 
 -- ============================================================================
 -- КОМАНДЫ
@@ -455,4 +380,13 @@ ix.command.Add("DropItemsStats", {
 
 function PLUGIN:InitPostEntity()
     self:LoadData()
+    timer.Remove(COOLDOWN_CLEANUP_TIMER)
+    timer.Create(COOLDOWN_CLEANUP_TIMER, 60, 0, function()
+        if (PLUGIN.CleanupExpiredCooldowns) then PLUGIN:CleanupExpiredCooldowns() end
+    end)
+end
+
+function PLUGIN:ShutDown()
+    timer.Remove(COOLDOWN_CLEANUP_TIMER)
+    self:SaveData()
 end

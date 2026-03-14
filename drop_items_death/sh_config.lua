@@ -118,12 +118,21 @@ function PLUGIN:ResetToDefaults()
 end
 
 function PLUGIN:ImportItemSettings(data)
-    if (type(data) == "table") then
-        self.itemSettings = data
-        self:SaveItemSettings()
-        return true
+    if (type(data) ~= "table") then return false end
+    -- Валидация: только таблицы с ключами-строками и значениями-таблицами с полями enabled/chance/reason
+    local validated = {}
+    for itemID, settings in pairs(data) do
+        if (type(itemID) == "string" and type(settings) == "table") then
+            validated[itemID] = {
+                enabled = settings.enabled,
+                chance = (type(settings.chance) == "number") and math.Clamp(settings.chance, 0, 100) or nil,
+                reason = type(settings.reason) == "string" and settings.reason or nil
+            }
+        end
     end
-    return false
+    self.itemSettings = validated
+    self:SaveItemSettings()
+    return true
 end
 
 function PLUGIN:ExportItemSettings()

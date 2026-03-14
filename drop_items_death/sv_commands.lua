@@ -148,10 +148,11 @@ ix.command.Add("DropDebug", {
         client:ChatPrint(string.format("Активных кулдаунов: %d", activeCooldowns))
         
         -- Предметы с отключенным выпадением
+        local itemSettings = PLUGIN.itemSettings
         local disabledItems = 0
-        for itemID, settings in pairs(PLUGIN.itemSettings) do
-            if (!settings.enabled) then
-                disabledItems = disabledItems + 1
+        if (itemSettings) then
+            for itemID, settings in pairs(itemSettings) do
+                if (!settings.enabled) then disabledItems = disabledItems + 1 end
             end
         end
         client:ChatPrint(string.format("Предметов с отключенным выпадением: %d", disabledItems))
