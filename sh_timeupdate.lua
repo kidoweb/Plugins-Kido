@@ -1,8 +1,8 @@
 local PLUGIN = PLUGIN
 
-PLUGIN.name = "Time Update"
+PLUGIN.name = "Обновление времени"
 PLUGIN.description = "Автоматическое обновление времени сервера с реального времени."
-PLUGIN.author = "Heritage Team"
+PLUGIN.author = "kido"
 
 if (SERVER) then
 	function PLUGIN:InitPostEntity()
