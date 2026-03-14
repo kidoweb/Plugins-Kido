@@ -2,6 +2,8 @@
 
 Коллекция плагинов для фреймворка **Helix** (GMod).
 
+**Discord:** [es1box](https://discord.gg/es1box)
+
 ## Требования
 
 - Garry's Mod
@@ -80,4 +82,4 @@ Plugins-Kido/
 
 ## Лицензия
 
-Уточняйте у авторов отдельных плагинов.
+MIT — см. файл [LICENSE](LICENSE).
